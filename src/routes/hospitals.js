@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { ah, HttpError, auth, roles, audit } = require('../middleware');
 
 // GET /api/hospitals?lat=19.28&lng=-99.65  (distancia en km si se envía la ubicación)
-router.get('/', auth, ah(async (req, res) => {
+router.get('/', auth, roles('medico', 'enfermeria'), ah(async (req, res) => {
   const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
   const hasPos = Number.isFinite(lat) && Number.isFinite(lng);
   const dist = hasPos

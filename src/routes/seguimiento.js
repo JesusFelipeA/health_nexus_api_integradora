@@ -1,9 +1,9 @@
 const router = require('express').Router();
 const pool = require('../db');
-const { ah, auth } = require('../middleware');
+const { ah, auth, roles } = require('../middleware');
 
 // GET /api/seguimiento  -> último registro de seguimiento por paciente
-router.get('/', auth, ah(async (req, res) => {
+router.get('/', auth, roles('medico', 'enfermeria'), ah(async (req, res) => {
   const [rows] = await pool.query(
     `SELECT s.id, s.paciente_id AS pacienteId,
             CONCAT_WS(' ', p.nombre, p.apellido_paterno, p.apellido_materno) AS paciente,

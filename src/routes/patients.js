@@ -9,7 +9,7 @@ const normNivel = (v) => { const n = ALIAS[String(v || '').toLowerCase()] || Str
 const ACTIVAS = "('en_espera','atendido','hospitalizado')";
 
 // GET /api/stats  -> totales del dashboard
-router.get('/stats', auth, ah(async (req, res) => {
+router.get('/stats', auth, roles('medico', 'enfermeria'), ah(async (req, res) => {
   const [[t]] = await pool.query('SELECT COUNT(*) AS n FROM pacientes WHERE activo = 1');
   const [[c]] = await pool.query(
     `SELECT

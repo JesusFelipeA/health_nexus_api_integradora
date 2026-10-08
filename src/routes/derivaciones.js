@@ -4,6 +4,15 @@ const { ah, HttpError, auth, roles, audit } = require('../middleware');
 
 /* ---------------- INTERNAS (movimientos de cama entre áreas) ---------------- */
 
+// GET /api/derivaciones/camas  -> camas disponibles para elegir destino de un traslado
+router.get('/camas', auth, roles('medico', 'enfermeria'), ah(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT c.id, c.codigo, c.area, c.tipo, COALESCE(sv.nombre, c.area) AS servicio
+     FROM camas c LEFT JOIN servicios sv ON sv.id = c.servicio_id
+     WHERE c.activo = 1 AND c.estado = 'disponible' ORDER BY servicio, c.codigo`);
+  res.json(rows);
+}));
+
 // GET /api/derivaciones/internas
 router.get('/internas', auth, roles('medico', 'enfermeria'), ah(async (req, res) => {
   const [rows] = await pool.query(

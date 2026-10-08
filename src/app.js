@@ -23,6 +23,8 @@ app.use('/api/hospitals', require('./routes/hospitals'));
 app.use('/api/seguimiento', require('./routes/seguimiento'));
 app.use('/api/auditoria', require('./routes/auditoria'));
 app.use('/api/emergencias', require('./routes/emergencias'));
+app.use('/api/farmacia', require('./routes/farmacia'));
+app.use('/api/enfermeria', require('./routes/enfermeria'));
 
 app.use((req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use(errorHandler);
