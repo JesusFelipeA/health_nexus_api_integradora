@@ -23,7 +23,8 @@ router.get('/triage', auth, roles('medico', 'enfermeria'), ah(async (req, res) =
   const [rows] = await pool.query(
     `SELECT p.id, CONCAT_WS(' ', p.nombre, p.apellido_paterno, p.apellido_materno) AS name,
             TIMESTAMPDIFF(YEAR, p.fecha_nacimiento, CURDATE()) AS age, p.sexo,
-            a.id AS admisionId, a.triage AS triageLevel, a.estado AS status, a.fecha_hora_llegada AS arrivedAt
+            a.id AS admisionId, a.triage AS triageLevel, a.estado AS status, a.fecha_hora_llegada AS arrivedAt,
+            a.motivo AS reason, a.diagnostico_presuntivo AS diagnosticoPresuntivo
      FROM pacientes p
      LEFT JOIN admisiones a ON a.id = (SELECT MAX(id) FROM admisiones WHERE paciente_id = p.id AND estado IN ${ACTIVAS})
      ${where}
@@ -31,11 +32,21 @@ router.get('/triage', auth, roles('medico', 'enfermeria'), ah(async (req, res) =
   res.json(rows);
 }));
 
-// PATCH /api/patients/:id/triage  { triageLevel }
-//   Cambia el nivel de triage. Si el paciente no tiene una admisión activa, se crea una al clasificarlo.
+// PATCH /api/patients/:id/triage  { triageLevel, motivo?, diagnosticoPresuntivo? }
+//   Cambia el nivel de triage y guarda el motivo de consulta y el diagnóstico presuntivo en la admisión.
+//   Si el paciente no tiene una admisión activa, se crea una al clasificarlo.
+//   Los dos textos son opcionales para la API: si no se envían, se conservan los que ya tenga la admisión.
 router.patch('/patients/:id(\\d+)/triage', auth, roles('medico', 'enfermeria'), ah(async (req, res) => {
   const nivel = normNivel((req.body || {}).triageLevel);
   if (!nivel) throw new HttpError(400, `triageLevel inválido. Usa: ${NIVELES.join(', ')}`);
+  const texto = (v, etiqueta) => {
+    if (v === undefined || v === null) return null;
+    const t = String(v).trim();
+    if (t.length > 2000) throw new HttpError(400, `${etiqueta} no puede superar 2000 caracteres`);
+    return t || null;
+  };
+  const motivo = texto((req.body || {}).motivo, 'El motivo');
+  const diagnostico = texto((req.body || {}).diagnosticoPresuntivo, 'El diagnóstico presuntivo');
   const [[pac]] = await pool.query('SELECT id FROM pacientes WHERE id = ? AND activo = 1', [req.params.id]);
   if (!pac) throw new HttpError(404, 'Paciente no encontrado');
   const critico = nivel === 'rojo' ? 'critical' : 'info';
@@ -46,15 +57,17 @@ router.patch('/patients/:id(\\d+)/triage', auth, roles('medico', 'enfermeria'), 
     const [[adm]] = await conn.query(`SELECT id, triage FROM admisiones WHERE paciente_id = ? AND estado IN ${ACTIVAS} ORDER BY id DESC LIMIT 1 FOR UPDATE`, [pac.id]);
     let out;
     if (adm) {
-      await conn.query('UPDATE admisiones SET triage = ?, updated_at = NOW() WHERE id = ?', [nivel, adm.id]);
-      await audit(req, { evento: 'actualizar', modulo: 'triage', descripcion: `Triage cambiado de ${adm.triage || 'sin clasificar'} a ${nivel}`, tipo: 'paciente', id: pac.id, antes: { triage: adm.triage }, despues: { triage: nivel }, severidad: critico }, conn);
+      await conn.query(
+        'UPDATE admisiones SET triage = ?, motivo = COALESCE(?, motivo), diagnostico_presuntivo = COALESCE(?, diagnostico_presuntivo), updated_at = NOW() WHERE id = ?',
+        [nivel, motivo, diagnostico, adm.id]);
+      await audit(req, { evento: 'actualizar', modulo: 'triage', descripcion: `Triage cambiado de ${adm.triage || 'sin clasificar'} a ${nivel}`, tipo: 'paciente', id: pac.id, antes: { triage: adm.triage }, despues: { triage: nivel, motivoYDiagnostico: !!(motivo || diagnostico) }, severidad: critico }, conn);
       out = { id: pac.id, admisionId: adm.id, triageLevel: nivel, admisionCreada: false };
     } else {
       const folio = `ADM-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(pac.id).padStart(5, '0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
       const [a] = await conn.query(
-        `INSERT INTO admisiones (paciente_id, user_id, folio, fecha_hora_llegada, tipo, triage, estado, created_at, updated_at)
-         VALUES (?,?,?,NOW(),'urgencias',?,'en_espera',NOW(),NOW())`, [pac.id, req.user.id, folio, nivel]);
-      await audit(req, { evento: 'crear', modulo: 'triage', descripcion: `Paciente clasificado en triage ${nivel} (admisión creada)`, tipo: 'paciente', id: pac.id, despues: { triage: nivel, admision: a.insertId }, severidad: critico }, conn);
+        `INSERT INTO admisiones (paciente_id, user_id, folio, fecha_hora_llegada, tipo, triage, motivo, diagnostico_presuntivo, estado, created_at, updated_at)
+         VALUES (?,?,?,NOW(),'urgencias',?,?,?,'en_espera',NOW(),NOW())`, [pac.id, req.user.id, folio, nivel, motivo, diagnostico]);
+      await audit(req, { evento: 'crear', modulo: 'triage', descripcion: `Paciente clasificado en triage ${nivel} (admisión creada)`, tipo: 'paciente', id: pac.id, despues: { triage: nivel, admision: a.insertId, motivoYDiagnostico: !!(motivo || diagnostico) }, severidad: critico }, conn);
       out = { id: pac.id, admisionId: a.insertId, triageLevel: nivel, admisionCreada: true };
     }
     await conn.commit();
